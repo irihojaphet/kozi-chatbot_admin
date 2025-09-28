@@ -1,0 +1,19 @@
+{
+  "name": "kozi-admin-agent",
+  "version": "1.0.0",
+  "description": "Kozi Admin Agent - Platform Management Assistant",
+  "private": true,
+  "scripts": {
+    "dev": "vite --port 5174",
+    "build": "vite build",
+    "preview": "vite preview --port 5174"
+  },
+  "dependencies": {
+    "vue": "^3.3.4",
+    "@fortawesome/fontawesome-free": "^6.4.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^4.2.3",
+    "vite": "^4.4.5"
+  }
+}
