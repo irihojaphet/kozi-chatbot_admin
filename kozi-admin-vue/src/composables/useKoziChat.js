@@ -12,6 +12,8 @@ export function useKoziChat() {
   const loading = ref(false)
   const error = ref(null)
   const currentChatTitle = ref('New Chat')
+  const showWelcomeScreen = ref(true)
+  const lastFailedMessage = ref(null) // NEW: For retry functionality
 
   // Load history from localStorage on mount
   onMounted(() => {
@@ -24,12 +26,21 @@ export function useKoziChat() {
       }
     }
     initializeUser()
+    loadSavedTheme()
   })
 
   // Watch history changes and save to localStorage (equivalent to React useEffect)
   watch(history, (newHistory) => {
     if (newHistory.length > 0) {
       localStorage.setItem('kozi-chat-history', JSON.stringify(newHistory))
+    }
+  }, { deep: true })
+
+  // Watch messages to hide welcome screen when conversation progresses
+  watch(messages, (newMessages) => {
+    // Hide welcome screen only when there's actual conversation (more than just greeting)
+    if (newMessages.length > 1) {
+      showWelcomeScreen.value = false
     }
   }, { deep: true })
 
@@ -114,7 +125,7 @@ export function useKoziChat() {
     history.value = [chatEntry, ...filtered].slice(0, 50) // Keep only last 50 chats
   }
 
-  // Start new chat
+  // Start new chat - UPDATED to show welcome screen
   const startNewChat = async () => {
     if (!currentUser.value) {
       console.warn('No user available for new chat')
@@ -131,7 +142,9 @@ export function useKoziChat() {
     currentSession.value = null
     chatStarted.value = false
     error.value = null
+    lastFailedMessage.value = null
     currentChatTitle.value = 'New Chat'
+    showWelcomeScreen.value = true // SHOW welcome screen on new chat
     loading.value = true
 
     try {
@@ -142,6 +155,7 @@ export function useKoziChat() {
         currentSession.value = data.data.session_id
         chatStarted.value = true
         
+        // Add greeting but keep welcome screen visible
         if (data.data.message) {
           addBotMessage(data.data.message)
         }
@@ -150,20 +164,26 @@ export function useKoziChat() {
       }
     } catch (e) {
       console.error('Failed to start session:', e)
-      error.value = 'Failed to start chat session'
+      error.value = 'Failed to start chat session. Please try again.'
       addBotMessage('Sorry, I had trouble starting our chat. Please try again.')
     } finally {
       loading.value = false
     }
   }
 
-  // Send message
+  // Send message - UPDATED with better error handling
   const sendMessage = async (text) => {
     if (!text.trim() || !currentUser.value || loading.value) {
       return
     }
 
     console.log('Sending message:', text)
+    
+    // Store the message in case we need to retry
+    lastFailedMessage.value = text
+
+    // Hide welcome screen when user sends a message
+    showWelcomeScreen.value = false
 
     // Auto-start chat if needed
     if (!chatStarted.value || !currentSession.value) {
@@ -184,7 +204,7 @@ export function useKoziChat() {
         }
       } catch (e) {
         console.error('Auto-start failed:', e)
-        addBotMessage('Sorry, I had trouble starting our chat. Please try the "New Chat" button.')
+        error.value = 'Failed to start chat session. Please try again.'
         loading.value = false
         return
       }
@@ -209,13 +229,23 @@ export function useKoziChat() {
       
       if (resp?.success && resp?.data) {
         addBotMessage(resp.data.message || 'I received your message.')
+        lastFailedMessage.value = null // Clear on success
       } else {
         throw new Error('Invalid message response')
       }
     } catch (e) {
       console.error('Failed to send message:', e)
-      error.value = 'Failed to send message'
-      addBotMessage('Sorry, I had trouble processing your message. Please try again.')
+      
+      // More specific error messages
+      if (e.message.includes('network') || e.message.includes('fetch')) {
+        error.value = 'Network error. Please check your connection and try again.'
+      } else if (e.message.includes('timeout')) {
+        error.value = 'Request timed out. The server might be busy, please try again.'
+      } else {
+        error.value = 'Unable to get response from Kozi Admin. Please try again.'
+      }
+      
+      // Don't clear lastFailedMessage - we need it for retry
     } finally {
       loading.value = false
     }
@@ -226,6 +256,30 @@ export function useKoziChat() {
     await sendMessage(text)
   }
 
+  // Retry last failed message - NEW
+  const retryLastMessage = async () => {
+    if (!lastFailedMessage.value) {
+      console.warn('No failed message to retry')
+      return
+    }
+
+    console.log('Retrying last message:', lastFailedMessage.value)
+    
+    // Remove the last user message (the failed one) from UI
+    if (messages.value.length > 0 && messages.value[messages.value.length - 1].sender === 'user') {
+      messages.value.pop()
+    }
+    
+    // Clear error
+    error.value = null
+    
+    // Store message to retry
+    const messageToRetry = lastFailedMessage.value
+    
+    // Retry sending
+    await sendMessage(messageToRetry)
+  }
+
   // Load chat history
   const loadChatHistory = async (historyItem) => {
     if (!historyItem.sessionId) return
@@ -234,6 +288,13 @@ export function useKoziChat() {
     if (currentSession.value && messages.value.length > 0) {
       saveCurrentChatToHistory()
     }
+    
+    // Hide welcome screen when loading history
+    showWelcomeScreen.value = false
+    
+    // Clear error state
+    error.value = null
+    lastFailedMessage.value = null
     
     loading.value = true
     try {
@@ -259,7 +320,8 @@ export function useKoziChat() {
       }
     } catch (e) {
       console.error('Failed to load history:', e)
-      addBotMessage('Failed to load chat history.')
+      error.value = 'Failed to load chat history.'
+      addBotMessage('Failed to load chat history. Please try again.')
     } finally {
       loading.value = false
     }
@@ -279,6 +341,17 @@ export function useKoziChat() {
   // Toggle theme
   const toggleTheme = () => {
     document.body.classList.toggle('dark')
+    // Save theme preference
+    const isDark = document.body.classList.contains('dark')
+    localStorage.setItem('kozi-theme', isDark ? 'dark' : 'light')
+  }
+
+  // Load saved theme on mount
+  const loadSavedTheme = () => {
+    const savedTheme = localStorage.getItem('kozi-theme')
+    if (savedTheme === 'dark') {
+      document.body.classList.add('dark')
+    }
   }
 
   // Auto-save current chat when component unmounts or page closes
@@ -308,6 +381,8 @@ export function useKoziChat() {
     loading: computed(() => loading.value),
     error: computed(() => error.value),
     currentChatTitle: computed(() => currentChatTitle.value),
+    showWelcomeScreen: computed(() => showWelcomeScreen.value),
+    lastFailedMessage: computed(() => lastFailedMessage.value), // NEW
     
     // Actions
     startNewChat,
@@ -316,7 +391,8 @@ export function useKoziChat() {
     loadChatHistory,
     deleteHistoryItem,
     clearAllHistory,
-    toggleTheme
+    toggleTheme,
+    retryLastMessage // NEW
   }
 }
 

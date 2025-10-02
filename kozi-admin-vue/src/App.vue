@@ -47,10 +47,14 @@
         </button>
       </div>
 
-      <!-- Chat Messages Area -->
+      <!-- Chat Messages Area - Pass loading & error props -->
       <ChatArea 
         :messages="messages" 
-        @suggestion-click="sendSuggestion" 
+        :showWelcomeScreen="showWelcomeScreen"
+        :loading="loading"
+        :error="error"
+        @suggestion-click="sendSuggestion"
+        @retry="handleRetry"
       />
       
       <!-- Chat Input -->
@@ -72,13 +76,16 @@ import { useKoziChat } from './composables/useKoziChat'
 // Local component state for sidebar visibility
 const sidebarVisible = ref(true)
 
-// Use our chat composable (same logic, different content)
+// Use our chat composable
 const {
   // State
   messages,
   history,
   loading,
+  error,
   currentChatTitle,
+  showWelcomeScreen,
+  lastFailedMessage, // NEW: For retry functionality
   
   // Actions
   startNewChat,
@@ -87,19 +94,24 @@ const {
   toggleTheme,
   loadChatHistory,
   deleteHistoryItem,
-  clearAllHistory
+  clearAllHistory,
+  retryLastMessage // NEW: Retry function
 } = useKoziChat()
 
 // Sidebar toggle functionality
 const toggleSidebar = () => {
   sidebarVisible.value = !sidebarVisible.value
 }
+
+// Handle retry after error
+const handleRetry = () => {
+  if (lastFailedMessage.value) {
+    retryLastMessage()
+  }
+}
 </script>
 
 <style>
-/* Import our polished CSS (same design) */
 @import './assets/dashboard.css';
-
-/* FontAwesome icons */
 @import '@fortawesome/fontawesome-free/css/all.css';
 </style>
