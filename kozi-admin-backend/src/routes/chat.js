@@ -1,18 +1,19 @@
 const express = require('express');
-const { ChatController } = require('../controllers');
+const chatController = require('../controllers/chatController'); // Direct import
 
 const router = express.Router();
 
 // Initialize chat controller once
-let chatController;
+let controllerInstance;
 const initializeController = async () => {
-  if (!chatController) {
-    chatController = new ChatController();
-    await chatController.initialize();
+  if (!controllerInstance) {
+    controllerInstance = new chatController(); // Use lowercase
+    await controllerInstance.initialize();
   }
-  return chatController;
+  return controllerInstance;
 };
 
+// Rest of routes stay the same...
 // POST /api/chat/start - Start new chat session
 router.post('/start', async (req, res) => {
   try {

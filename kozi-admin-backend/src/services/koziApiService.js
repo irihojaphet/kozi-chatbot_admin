@@ -4,23 +4,28 @@ const logger = require('../core/utils/logger');
 
 class KoziApiService {
   constructor() {
-    this.baseURL = process.env.KOZI_API_BASE_URL || 'https://apis.kozi.rw';
-    this.loginEndpoint = process.env.KOZI_API_LOGIN_ENDPOINT || '/login';
-    this.email = process.env.KOZI_API_EMAIL;
-    this.password = process.env.KOZI_API_PASSWORD;
-    this.roleId = Number(process.env.KOZI_API_ROLE_ID || 1);
+    const env = require('../config/environment');
+this.baseURL = env.KOZI_API_BASE_URL;
+this.loginEndpoint = env.KOZI_API_LOGIN_ENDPOINT;
+this.email = env.KOZI_API_EMAIL;
+this.password = env.KOZI_API_PASSWORD;
+this.roleId = env.KOZI_API_ROLE_ID;
 
     this.timeout = 10000; // 10s
     this.cache = new Map();
     this.cacheTimeout = 5 * 60 * 1000; // 5 minutes
 
     this.token = null;
-    this.tokenExpiry = null; // if JWT, we’ll parse exp; otherwise rely on 401
+    this.tokenExpiry = null;
 
     this.client = axios.create({
       baseURL: this.baseURL,
       timeout: this.timeout,
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }
+      headers: { 
+        'Content-Type': 'application/json', 
+        'Accept': 'application/json',
+        'User-Agent': 'Kozi-Platform/1.0'
+      }
     });
 
     // Request logging + auth header
@@ -30,7 +35,6 @@ class KoziApiService {
         if (this.token) {
           config.headers.Authorization = `Bearer ${this.token}`;
         }
-        // For idempotent GETs, allow a per-request "noAuth" flag if needed
         return config;
       },
       (error) => {
@@ -39,7 +43,7 @@ class KoziApiService {
       }
     );
 
-    // Response logging + unified error
+    // Response logging + unified error handling
     this.client.interceptors.response.use(
       (response) => {
         logger.info('Kozi API Response', {
@@ -54,9 +58,9 @@ class KoziApiService {
         logger.error('Kozi API Response Error', {
           status,
           message: error.message,
-          url
+          url,
+          data: error.response?.data
         });
-        // Bubble up so our wrapper can handle 401 retry logic
         return Promise.reject(error);
       }
     );
@@ -78,30 +82,39 @@ class KoziApiService {
       role_id: this.roleId
     });
 
-    const { data } = await axios.post(`${this.baseURL}${this.loginEndpoint}`, payload, {
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      timeout: this.timeout
-    });
+    try {
+      // Use the configured client for consistency
+      const { data } = await this.client.post(this.loginEndpoint, payload);
 
-    const token =
-      data?.token ||
-      data?.access_token ||
-      data?.accessToken ||
-      data?.data?.token ||
-      data?.data?.access_token;
+      const token =
+        data?.token ||
+        data?.access_token ||
+        data?.accessToken ||
+        data?.data?.token ||
+        data?.data?.access_token;
 
-    if (!token) {
-      throw new Error('Authentication succeeded but no token was returned by the API.');
+      if (!token) {
+        throw new Error('Authentication succeeded but no token was returned by the API.');
+      }
+
+      this.token = token;
+      this.tokenExpiry = this._maybeDecodeJwtExp(token);
+
+      logger.info('Kozi API Auth: success', {
+        tokenPreview: `${String(token).substring(0, 30)}...`,
+        tokenLength: token.length,
+        hasExp: Boolean(this.tokenExpiry)
+      });
+      
+      return token;
+    } catch (error) {
+      logger.error('Kozi API Auth: failed', { 
+        error: error.message,
+        status: error.response?.status,
+        data: error.response?.data 
+      });
+      throw error;
     }
-
-    this.token = token;
-    this.tokenExpiry = this._maybeDecodeJwtExp(token); // may be null if not a JWT
-
-    logger.info('Kozi API Auth: success', {
-      tokenPreview: `${String(token).substring(0, 16)}...`,
-      hasExp: Boolean(this.tokenExpiry)
-    });
-    return token;
   }
 
   _maybeDecodeJwtExp(token) {
@@ -110,8 +123,7 @@ class KoziApiService {
       if (parts.length !== 3) return null;
       const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
       if (payload && payload.exp) {
-        // convert to ms
-        return payload.exp * 1000;
+        return payload.exp * 1000; // convert to ms
       }
       return null;
     } catch {
@@ -122,7 +134,7 @@ class KoziApiService {
   _tokenIsFresh() {
     if (!this.token) return false;
     if (!this.tokenExpiry) return true; // no exp info; rely on 401
-    // refresh a little early (60s skew)
+    // refresh a little early (60s buffer)
     return Date.now() < (this.tokenExpiry - 60 * 1000);
   }
 
@@ -143,6 +155,7 @@ class KoziApiService {
       // If unauthorized and we haven't retried yet, re-auth and retry once
       if (retryOn401 && err?.response?.status === 401) {
         logger.info('Kozi API: token expired, re-authenticating and retrying once…');
+        this.token = null; // Clear the invalid token
         await this.login();
         return this.client.request(config);
       }
@@ -183,16 +196,14 @@ class KoziApiService {
   /* ======================== NORMALIZER ======================== */
 
   _unwrapData(payload) {
-    // Your test prints either [] or { data: [] }
     if (Array.isArray(payload)) return payload;
     if (payload?.data && Array.isArray(payload.data)) return payload.data;
-    return payload; // as-is if API shape differs
+    return payload;
   }
 
   /* ======================== PUBLIC API METHODS ======================== */
 
   async healthCheck() {
-    // Your /health returned 404 in the test; we’ll treat non-200 as false
     try {
       const res = await axios.get(`${this.baseURL}/health`, { timeout: 5000 });
       return res.status === 200;
@@ -203,11 +214,10 @@ class KoziApiService {
 
   /**
    * Get all job seekers
-   * Primary:  GET /admin/select_jobseekers  (observed working)
+   * Primary:  GET /admin/select_jobseekers  (tested working)
    * Fallback: GET /admin/job_seekers
    */
   async getAllJobSeekers({ useCache = true } = {}) {
-    // Try the tested endpoint first
     const endpoint = '/admin/select_jobseekers';
     const cacheKey = this._getCacheKey(endpoint);
 
@@ -220,9 +230,9 @@ class KoziApiService {
       const res = await this._request({ method: 'GET', url: endpoint });
       const data = this._unwrapData(res.data);
       this._setCache(cacheKey, data);
+      logger.info('Job seekers fetched successfully', { count: data.length });
       return data;
     } catch (err) {
-      // Fallback to legacy/other endpoint if the tested one isn’t available
       logger.info('Job seekers primary endpoint failed, trying fallback /admin/job_seekers…');
       const fallback = '/admin/job_seekers';
       const res2 = await this._request({ method: 'GET', url: fallback });
@@ -248,14 +258,14 @@ class KoziApiService {
     const res = await this._request({ method: 'GET', url: endpoint });
     const data = this._unwrapData(res.data);
     this._setCache(cacheKey, data);
+    logger.info('Jobs fetched successfully', { count: data.length });
     return data;
   }
 
   /**
    * Get job seekers who did not complete profile
-   * Your test used /admin/incomplete-profiles (may not exist) — your older
-   * code used /admin/job_seekers/who_did_not_complete_profile. We’ll prefer
-   * the longer path and fallback to the hyphen one.
+   * Primary: /admin/job_seekers/who_did_not_complete_profile
+   * Fallback: /admin/incomplete-profiles
    */
   async getIncompleteProfiles({ useCache = true } = {}) {
     const primary = '/admin/job_seekers/who_did_not_complete_profile';
@@ -301,7 +311,7 @@ class KoziApiService {
   }
 
   /**
-   * Simple response time test similar to your script
+   * Simple response time test
    */
   async testResponseTimes() {
     const tests = [
@@ -320,6 +330,20 @@ class KoziApiService {
       }
     }
     return results;
+  }
+
+  /**
+   * Get service status and configuration
+   */
+  getStatus() {
+    return {
+      baseURL: this.baseURL,
+      authenticated: Boolean(this.token),
+      tokenFresh: this._tokenIsFresh(),
+      cacheSize: this.cache.size,
+      email: this.email,
+      roleId: this.roleId
+    };
   }
 }
 

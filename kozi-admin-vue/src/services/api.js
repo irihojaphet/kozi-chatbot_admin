@@ -134,3 +134,25 @@ export async function processEmails() {
     throw error;
   }
 }
+// Add to your existing api.js
+export async function getJobSeekers(useCache = true) {
+  const r = await fetch(`${ADMIN_CONFIG.baseURL}/admin/job-seekers?use_cache=${useCache}`);
+  if (!r.ok) throw new Error(`Failed to get job seekers: ${r.status}`);
+  return r.json();
+}
+
+export async function getJobs(useCache = true, status = null, category = null) {
+  let url = `${ADMIN_CONFIG.baseURL}/admin/jobs?use_cache=${useCache}`;
+  if (status) url += `&status=${status}`;
+  if (category) url += `&category=${category}`;
+  
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`Failed to get jobs: ${r.status}`);
+  return r.json();
+}
+
+export async function getDashboardStats(useCache = true) {
+  const r = await fetch(`${ADMIN_CONFIG.baseURL}/admin/dashboard-stats?use_cache=${useCache}`);
+  if (!r.ok) throw new Error(`Failed to get dashboard stats: ${r.status}`);
+  return r.json();
+}

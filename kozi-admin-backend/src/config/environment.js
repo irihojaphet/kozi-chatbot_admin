@@ -17,6 +17,13 @@ const envSchema = Joi.object({
   EMBEDDING_MODEL: Joi.string().default('text-embedding-3-small'),
   CHAT_MODEL: Joi.string().default('gpt-4o-mini'),
   
+  // Kozi API Configuration
+  KOZI_API_BASE_URL: Joi.string().default('https://apis.kozi.rw'),
+  KOZI_API_LOGIN_ENDPOINT: Joi.string().default('/login'),
+  KOZI_API_EMAIL: Joi.string().email().default('iriho.japhet@gmail.com'),
+  KOZI_API_PASSWORD: Joi.string().default('AmArIzA.1'),
+  KOZI_API_ROLE_ID: Joi.number().default(1),
+  
   // Vector Storage
   VECTOR_STORE_PATH: Joi.string().default('./data/vectors'),
   

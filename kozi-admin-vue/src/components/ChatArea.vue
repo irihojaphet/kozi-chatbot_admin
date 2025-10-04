@@ -1,6 +1,6 @@
 <template>
   <div class="chat-messages">
-    <!-- Welcome Screen - Show based on showWelcomeScreen state -->
+    <!-- Welcome Screen -->
     <div v-if="showWelcomeScreen" class="welcome-screen">
       <div class="welcome-content">
         <h1>Hello Admin! What would you like to manage today?</h1>
@@ -20,7 +20,7 @@
       </div>
     </div>
 
-    <!-- Chat Messages - Show when welcome screen is hidden -->
+    <!-- Chat Messages -->
     <template v-if="!showWelcomeScreen">
       <div
         v-for="(message, index) in messages"
@@ -33,12 +33,27 @@
             {{ message.text }}
           </div>
           
-          <!-- Bot messages: formatted HTML -->
-          <div
-            v-else
-            class="formatted-content"
-            v-html="message.text"
-          ></div>
+          <!-- Bot messages: enhanced rendering based on type -->
+          <div v-else class="admin-response">
+            <DatabaseQueryResponse 
+              v-if="message.type === 'database_query'"
+              :content="message.text"
+            />
+            <PaymentReminderResponse 
+              v-else-if="message.type === 'payment_reminder'"
+              :content="message.text"
+            />
+            <EmailSummaryResponse 
+              v-else-if="message.type === 'email_summary'"
+              :content="message.text"
+            />
+            <AnalyticsResponse 
+              v-else-if="message.type === 'analytics'"
+              :content="message.text"
+            />
+            <!-- Default formatted text for other types -->
+            <div v-else class="formatted-text" v-html="formatText(message.text)"></div>
+          </div>
         </div>
       </div>
 
@@ -72,6 +87,11 @@
 </template>
 
 <script setup>
+import DatabaseQueryResponse from './responses/DatabaseQueryResponse.vue'
+import PaymentReminderResponse from './responses/PaymentReminderResponse.vue'
+import EmailSummaryResponse from './responses/EmailSummaryResponse.vue'
+import AnalyticsResponse from './responses/AnalyticsResponse.vue'
+
 // Define props
 defineProps({
   messages: {
@@ -119,6 +139,14 @@ const adminSuggestionCards = [
   }
 ]
 
+// Format plain text with basic HTML
+const formatText = (text) => {
+  return text
+    .replace(/\n/g, '<br>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+}
+
 // Handle suggestion click
 const handleSuggestionClick = (message) => {
   emit('suggestion-click', message)
@@ -131,7 +159,23 @@ const handleRetry = () => {
 </script>
 
 <style scoped>
-/* Loading Indicator Styles */
+/* Admin Response Styling */
+.admin-response {
+  max-width: 100%;
+}
+
+/* Formatted Text Fallback */
+.formatted-text {
+  font-family: 'Inter', system-ui, sans-serif;
+  line-height: 1.6;
+  color: var(--gray-800);
+}
+
+body.dark .formatted-text {
+  color: var(--gray-200);
+}
+
+/* Existing styles remain the same... */
 .loading-message {
   display: flex;
   align-items: center;
@@ -191,7 +235,6 @@ const handleRetry = () => {
   }
 }
 
-/* Error Message Styles */
 .error-message {
   background: rgba(239, 68, 68, 0.05) !important;
   border: 1px solid rgba(239, 68, 68, 0.2) !important;
@@ -246,11 +289,6 @@ const handleRetry = () => {
   box-shadow: var(--shadow-md);
 }
 
-.retry-button i {
-  font-size: var(--font-size-xs);
-}
-
-/* Dark Mode Styles */
 body.dark .loading-message {
   background: #1a1a1a !important;
   border-color: #2a2a2a !important;

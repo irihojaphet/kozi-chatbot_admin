@@ -406,6 +406,99 @@ function analyzePayrollData(payrollData) {
     completion_rate: Math.round((completed / total) * 100)
   };
 }
+// Add these to your existing /src/routes/admin.js
 
-// Keep existing routes...
+// NEW: Get all jobs data
+router.get('/jobs', authenticateAdmin, async (req, res) => {
+  try {
+    const { use_cache = 'true', status, category } = req.query;
+    const useCache = use_cache === 'true';
+    
+    logger.info('Fetching jobs data', { useCache, status, category });
+    
+    let jobs = await koziApi.getAllJobs(useCache);
+    
+    // Apply filters if requested
+    if (status) {
+      jobs = jobs.filter(job => 
+        job.status && job.status.toLowerCase() === status.toLowerCase()
+      );
+    }
+
+    if (category) {
+      jobs = jobs.filter(job => 
+        job.category && job.category.toLowerCase().includes(category.toLowerCase())
+      );
+    }
+    
+    res.json({
+      success: true,
+      data: {
+        jobs: jobs,
+        total: jobs?.length || 0,
+        filters: { status, category },
+        cached: useCache,
+        timestamp: new Date().toISOString()
+      }
+    });
+    
+  } catch (error) {
+    logger.error('Error fetching jobs', { error: error.message });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch jobs data',
+      details: error.message
+    });
+  }
+});
+
+// NEW: Get dashboard stats (efficient single endpoint for overview)
+router.get('/dashboard-stats', authenticateAdmin, async (req, res) => {
+  try {
+    const { use_cache = 'true' } = req.query;
+    const useCache = use_cache === 'true';
+    
+    logger.info('Fetching dashboard stats', { useCache });
+    
+    // Fetch all data concurrently for efficiency
+    const [jobSeekers, jobs, incompleteProfiles, payrollData] = await Promise.all([
+      koziApi.getAllJobSeekers(useCache),
+      koziApi.getAllJobs(useCache),
+      koziApi.getIncompleteProfiles(useCache).catch(() => []),
+      koziApi.getPayrollData(useCache).catch(() => [])
+    ]);
+
+    const stats = {
+      job_seekers: {
+        total: jobSeekers?.length || 0,
+        incomplete: incompleteProfiles?.length || 0,
+        completion_rate: jobSeekers?.length > 0 ? 
+          Math.round(((jobSeekers.length - (incompleteProfiles?.length || 0)) / jobSeekers.length) * 100) : 0
+      },
+      jobs: {
+        total: jobs?.length || 0,
+        active: jobs?.filter(job => job.status === 'active').length || 0,
+        inactive: jobs?.filter(job => job.status !== 'active').length || 0
+      },
+      payroll: analyzePayrollData(payrollData),
+      system: {
+        cache_enabled: useCache,
+        last_updated: new Date().toISOString()
+      }
+    };
+    
+    res.json({
+      success: true,
+      data: stats
+    });
+    
+  } catch (error) {
+    logger.error('Error fetching dashboard stats', { error: error.message });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch dashboard stats',
+      details: error.message
+    });
+  }
+});
 module.exports = router;
