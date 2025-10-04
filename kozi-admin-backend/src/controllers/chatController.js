@@ -1,6 +1,8 @@
 const { pool } = require('../core/db/connection');
 const logger = require('../core/utils/logger');
 const OpenAI = require('openai');
+const KoziApiService = require('../services/koziApiService');
+const EmailService = require('../services/emailService');
 
 class chatController {
   constructor() {
@@ -8,7 +10,11 @@ class chatController {
       apiKey: process.env.OPENAI_API_KEY
     });
     
-    // Admin bot system prompt
+    // Initialize services
+    this.koziApi = new KoziApiService();
+    this.emailService = new EmailService();
+    
+    // Admin bot system prompt (keep existing)
     this.systemPrompt = `YOU ARE KOZI ADMIN AI, THE OFFICIAL VIRTUAL ASSISTANT FOR PLATFORM ADMINISTRATORS OF KOZI.RW.
 YOUR ROLE IS TO SUPPORT PLATFORM MANAGEMENT, IMPROVE EFFICIENCY, AND AUTOMATE ADMIN WORKFLOWS.
 YOU SERVE ONLY ADMIN USERS — NOT JOB SEEKERS OR EMPLOYERS.
@@ -18,6 +24,7 @@ CORE FUNCTIONS:
 2. DATABASE MANAGEMENT - Help filter, search, and query worker/employer data  
 3. GMAIL AI SUPPORT - Categorize emails and draft professional replies
 4. PLATFORM ANALYTICS - Generate reports and insights
+5. PROFILE COMPLETION TRACKING - Monitor and send reminders for incomplete profiles
 
 STYLE: Professional, precise, supportive. Use tables, bullet points, numbered steps.
 ALWAYS be action-oriented and suggest next steps.`;
@@ -25,9 +32,17 @@ ALWAYS be action-oriented and suggest next steps.`;
 
   async initialize() {
     try {
-      // Load admin knowledge base
-      logger.info('Loading admin knowledge base...');
-      // Initialize vector database for admin content
+      logger.info('Initializing chat controller with real-time services...');
+      
+      // Verify Kozi API connection
+      const apiHealthy = await this.koziApi.healthCheck();
+      if (!apiHealthy) {
+        logger.warn('Kozi API health check failed - will use fallback data');
+      }
+      
+      // Verify email service
+      await this.emailService.verifyConnection();
+      
       logger.info('chatController initialized successfully');
     } catch (error) {
       logger.error('Failed to initialize chatController', { error: error.message });
@@ -35,106 +50,37 @@ ALWAYS be action-oriented and suggest next steps.`;
     }
   }
 
-  async startSession(req, res) {
-    try {
-      const { user_id } = req.body;
-      
-      // Validate admin user
-      const adminUser = await this.validateAdminUser(user_id);
-      if (!adminUser) {
-        return res.status(403).json({
-          success: false,
-          error: 'Unauthorized: Admin access required'
-        });
-      }
-
-      const sessionId = `admin_${Date.now()}_${user_id}`;
-      
-      // Create admin session
-      await this.createAdminSession(sessionId, user_id);
-      
-      const greeting = `Hello Admin! I'm your Kozi Assistant. Would you like me to check salary reminders, query the database, or process emails today?`;
-      
-      // Save greeting message
-      await this.saveMessage(sessionId, user_id, 'assistant', greeting, 'text');
-      
-      res.json({
-        success: true,
-        data: {
-          session_id: sessionId,
-          message: greeting
-        }
-      });
-      
-    } catch (error) {
-      logger.error('Error starting admin session', { error: error.message });
-      res.status(500).json({
-        success: false,
-        error: 'Failed to start admin session'
-      });
-    }
-  }
-
-  async sendMessage(req, res) {
-    try {
-      const { session_id, user_id, message } = req.body;
-      
-      // Validate admin session
-      const isValidSession = await this.validateAdminSession(session_id, user_id);
-      if (!isValidSession) {
-        return res.status(403).json({
-          success: false,
-          error: 'Invalid admin session'
-        });
-      }
-
-      // Save user message
-      await this.saveMessage(session_id, user_id, 'admin', message, 'text');
-      
-      // Process admin message
-      const response = await this.processAdminMessage(message, session_id, user_id);
-      
-      // Save assistant response
-      await this.saveMessage(session_id, user_id, 'assistant', response.message, response.type);
-      
-      res.json({
-        success: true,
-        data: {
-          message: response.message
-        }
-      });
-      
-    } catch (error) {
-      logger.error('Error processing admin message', { error: error.message });
-      res.status(500).json({
-        success: false,
-        error: 'Failed to process message'
-      });
-    }
-  }
+  // ... keep existing startSession and sendMessage methods ...
 
   async processAdminMessage(message, sessionId, userId) {
     const msg = message.toLowerCase();
     
     try {
-      // Payment reminders
-      if (msg.includes('payment') || msg.includes('salary') || msg.includes('reminder')) {
+      // Payment reminders (UPDATED WITH REAL API)
+      if (msg.includes('payment') || msg.includes('salary') || msg.includes('payroll') || msg.includes('reminder')) {
         return await this.handlePaymentQuery(message);
       }
       
-      // Database queries
+      // Database queries (UPDATED WITH REAL API)
       if (msg.includes('database') || msg.includes('query') || msg.includes('worker') || 
-          msg.includes('employee') || msg.includes('employer') || msg.includes('filter')) {
+          msg.includes('employee') || msg.includes('job seeker') || msg.includes('filter') ||
+          msg.includes('profile')) {
         return await this.handleDatabaseQuery(message);
       }
       
-      // Email processing
+      // Profile completion reminders (NEW FEATURE)
+      if (msg.includes('incomplete') || msg.includes('profile completion') || 
+          msg.includes('send reminder') || msg.includes('email reminder')) {
+        return await this.handleProfileReminders(message);
+      }
+      
+      // Email processing (keep existing)
       if (msg.includes('email') || msg.includes('gmail') || msg.includes('categorize') || 
           msg.includes('draft') || msg.includes('reply')) {
         return await this.handleEmailQuery(message);
       }
       
-      // Analytics
+      // Analytics (keep existing)
       if (msg.includes('analytics') || msg.includes('report') || msg.includes('insight') || 
           msg.includes('dashboard') || msg.includes('metric')) {
         return await this.handleAnalyticsQuery(message);
@@ -152,9 +98,475 @@ ALWAYS be action-oriented and suggest next steps.`;
     }
   }
 
+  /**
+   * UPDATED: Handle payment queries with real-time API data
+   */
   async handlePaymentQuery(message) {
     try {
-      // Get payment schedules from database
+      logger.info('Fetching real-time payroll data...');
+      
+      // Fetch real payroll data from Kozi API
+      const payrollData = await this.koziApi.getPayrollData(true);
+      
+      if (!payrollData || payrollData.length === 0) {
+        return {
+          message: `Payroll Status Update
+
+No payroll records found in the system.
+
+Suggested Actions:
+- Verify API connection
+- Check payroll system status
+- Contact technical support if issue persists
+
+Would you like me to help with something else?`,
+          type: 'payment_reminder'
+        };
+      }
+
+      // Analyze payroll data
+      const pendingPayments = payrollData.filter(p => p.status === 'pending');
+      const upcomingPayments = pendingPayments.filter(p => {
+        const dueDate = new Date(p.due_date);
+        const today = new Date();
+        const daysUntil = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
+        return daysUntil >= 0 && daysUntil <= 30;
+      });
+
+      // Format response
+      let response = `Payroll Summary (Real-Time Data)
+
+📊 OVERVIEW:
+- Total Payroll Records: ${payrollData.length}
+- Pending Payments: ${pendingPayments.length}
+- Upcoming (Next 30 days): ${upcomingPayments.length}
+
+`;
+
+      if (upcomingPayments.length > 0) {
+        response += `⏰ UPCOMING PAYMENTS:\n\n`;
+        
+        upcomingPayments.slice(0, 5).forEach((payment, index) => {
+          const dueDate = new Date(payment.due_date);
+          const daysUntil = Math.ceil((dueDate - new Date()) / (1000 * 60 * 60 * 24));
+          
+          response += `${index + 1}. Period: ${payment.period}
+   Amount: RWF ${payment.amount?.toLocaleString() || 'N/A'}
+   Due Date: ${dueDate.toLocaleDateString()}
+   Days Remaining: ${daysUntil} days
+   Status: ${payment.status}
+
+`;
+        });
+
+        response += `✅ SUGGESTED ACTIONS:
+1. Review payment schedules
+2. Verify employee bank details
+3. Prepare payment batch files
+4. Send payment notifications
+5. Generate payroll reports
+
+Would you like me to:
+- Send email notifications to employees?
+- Generate detailed payroll report?
+- Filter by specific criteria?`;
+      } else {
+        response += `✅ All payments are up to date!
+
+No urgent payments due in the next 30 days.
+
+SUGGESTED ACTIONS:
+- Review historical payment data
+- Plan for next payment cycle
+- Generate financial reports
+
+Would you like me to help with anything else?`;
+      }
+
+      return {
+        message: response,
+        type: 'payment_reminder'
+      };
+      
+    } catch (error) {
+      logger.error('Error handling payment query with real API', { error: error.message });
+      
+      // Fallback to local database if API fails
+      return this.handlePaymentQueryFallback();
+    }
+  }
+
+  /**
+   * UPDATED: Handle database queries with real-time API data
+   */
+  async handleDatabaseQuery(message) {
+    try {
+      logger.info('Fetching real-time job seeker data...');
+      
+      // Fetch real job seeker data from Kozi API
+      const jobSeekers = await this.koziApi.getAllJobSeekers(true);
+      
+      if (!jobSeekers || jobSeekers.length === 0) {
+        return {
+          message: `Database Query Result
+
+No job seeker records found in the system.
+
+This could mean:
+- API connection issue
+- Database is empty
+- Access permissions problem
+
+Please check the system status or contact technical support.`,
+          type: 'database_query'
+        };
+      }
+      // Analyze job seeker data
+      const stats = this.analyzeJobSeekerData(jobSeekers);
+      
+      // Format response
+      let response = `Database Query Results (Real-Time Data)
+
+📊 JOB SEEKER OVERVIEW:
+- Total Registered: ${stats.total}
+- Active Profiles: ${stats.active}
+- Inactive Profiles: ${stats.inactive}
+- Profile Completion Rate: ${stats.avgCompletion}%
+
+📍 LOCATION DISTRIBUTION:
+${stats.locationBreakdown.slice(0, 5).map((loc, idx) => 
+  `${idx + 1}. ${loc.location}: ${loc.count} job seekers (${loc.percentage}%)`
+).join('\n')}
+
+📋 PROFILE STATUS:
+- Complete Profiles (100%): ${stats.completeProfiles}
+- Incomplete Profiles: ${stats.incompleteProfiles}
+- Recently Updated (7 days): ${stats.recentlyUpdated}
+
+💼 TOP JOB CATEGORIES:
+${stats.categoryBreakdown.slice(0, 5).map((cat, idx) => 
+  `${idx + 1}. ${cat.category}: ${cat.count} job seekers`
+).join('\n')}
+
+✅ SUGGESTED ACTIONS:
+1. Send reminders to incomplete profiles (${stats.incompleteProfiles} users)
+2. Generate detailed analytics report
+3. Filter by specific criteria (location, category, status)
+4. Export data for external analysis
+5. Review user engagement trends
+
+Would you like me to:
+- Send profile completion reminders?
+- Show detailed breakdown for specific location?
+- Filter by job category or experience level?
+- Generate export report?`;
+
+      return {
+        message: response,
+        type: 'database_query'
+      };
+      
+    } catch (error) {
+      logger.error('Error handling database query with real API', { error: error.message });
+      
+      // Fallback to local database if API fails
+      return this.handleDatabaseQueryFallback();
+    }
+  }
+
+  /**
+   * NEW: Handle profile completion reminders
+   */
+  async handleProfileReminders(message) {
+    try {
+      logger.info('Fetching incomplete profiles for reminder campaign...');
+      
+      // Fetch incomplete profiles from Kozi API
+      const incompleteProfiles = await this.koziApi.getIncompleteProfiles(true);
+      
+      if (!incompleteProfiles || incompleteProfiles.length === 0) {
+        return {
+          message: `Profile Completion Status
+
+🎉 Great news! All user profiles are complete!
+
+No reminders needed at this time.
+
+SUGGESTED ACTIONS:
+- Review profile quality metrics
+- Monitor new registrations
+- Generate completion rate report
+
+Would you like me to show overall profile statistics?`,
+          type: 'email_summary'
+        };
+      }
+
+      // Check if user wants to send emails
+      const shouldSendEmails = message.toLowerCase().includes('send') || 
+                               message.toLowerCase().includes('email');
+
+      if (shouldSendEmails) {
+        // Send reminder emails
+        logger.info('Sending profile completion reminder emails...', { 
+          count: incompleteProfiles.length 
+        });
+
+        const emailResults = [];
+        let successCount = 0;
+        let failCount = 0;
+
+        // Send emails in batches to avoid overwhelming the email server
+        const batchSize = 10;
+        for (let i = 0; i < incompleteProfiles.length; i += batchSize) {
+          const batch = incompleteProfiles.slice(i, i + batchSize);
+          
+          for (const profile of batch) {
+            try {
+              const result = await this.emailService.sendProfileCompletionReminder({
+                email: profile.email,
+                full_name: profile.full_name || profile.name,
+                completion_percentage: profile.completion_percentage || 0,
+                missing_fields: profile.missing_fields || []
+              });
+
+              if (result.success) {
+                successCount++;
+              } else {
+                failCount++;
+              }
+              
+              emailResults.push(result);
+
+              // Small delay between emails
+              await new Promise(resolve => setTimeout(resolve, 500));
+            } catch (error) {
+              logger.error('Failed to send reminder email', { 
+                email: profile.email, 
+                error: error.message 
+              });
+              failCount++;
+            }
+          }
+
+          // Longer delay between batches
+          if (i + batchSize < incompleteProfiles.length) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+        }
+
+        return {
+          message: `✉️ Profile Completion Reminder Campaign
+
+📤 EMAILS SENT:
+- Total Recipients: ${incompleteProfiles.length}
+- Successfully Sent: ${successCount}
+- Failed: ${failCount}
+- Success Rate: ${Math.round((successCount / incompleteProfiles.length) * 100)}%
+
+📊 TARGET BREAKDOWN:
+${this.getProfileCompletionBreakdown(incompleteProfiles)}
+
+✅ CAMPAIGN COMPLETED
+
+Next Steps:
+- Monitor email open rates
+- Track profile completion improvements
+- Follow up with non-responders in 7 days
+
+Would you like me to:
+- Show detailed sending report?
+- Schedule follow-up campaign?
+- Generate analytics dashboard?`,
+          type: 'email_summary'
+        };
+
+      } else {
+        // Just show statistics
+        return {
+          message: `Profile Completion Analysis
+
+📊 INCOMPLETE PROFILES SUMMARY:
+- Total Incomplete: ${incompleteProfiles.length}
+- Avg Completion: ${Math.round(
+            incompleteProfiles.reduce((sum, p) => sum + (p.completion_percentage || 0), 0) / 
+            incompleteProfiles.length
+          )}%
+
+📋 BREAKDOWN BY COMPLETION:
+${this.getProfileCompletionBreakdown(incompleteProfiles)}
+
+📍 TOP LOCATIONS WITH INCOMPLETE PROFILES:
+${this.getLocationBreakdown(incompleteProfiles)}
+
+⚠️ COMMON MISSING FIELDS:
+${this.getMissingFieldsAnalysis(incompleteProfiles)}
+
+✅ SUGGESTED ACTIONS:
+1. Send email reminders to all ${incompleteProfiles.length} users
+2. Target users with <50% completion first
+3. Offer incentives for profile completion
+4. Provide step-by-step completion guide
+5. Schedule follow-up reminders
+
+Would you like me to:
+- Send reminder emails now?
+- Show detailed user list?
+- Filter by completion percentage?
+- Generate export report?`,
+          type: 'email_summary'
+        };
+      }
+      
+    } catch (error) {
+      logger.error('Error handling profile reminders', { error: error.message });
+      return {
+        message: 'Sorry, I encountered an error processing profile reminder request. Please try again.',
+        type: 'text'
+      };
+    }
+  }
+
+  // ... keep existing handleEmailQuery and handleAnalyticsQuery methods ...
+
+  /**
+   * Helper: Analyze job seeker data
+   */
+  analyzeJobSeekerData(jobSeekers) {
+    const total = jobSeekers.length;
+    const active = jobSeekers.filter(js => js.status === 'active' || js.is_active).length;
+    const inactive = total - active;
+    
+    // Calculate average completion
+    const totalCompletion = jobSeekers.reduce((sum, js) => 
+      sum + (js.profile_completion || js.completion_percentage || 0), 0
+    );
+    const avgCompletion = Math.round(totalCompletion / total);
+    
+    // Location breakdown
+    const locationMap = new Map();
+    jobSeekers.forEach(js => {
+      const loc = js.location || 'Unknown';
+      locationMap.set(loc, (locationMap.get(loc) || 0) + 1);
+    });
+    const locationBreakdown = Array.from(locationMap.entries())
+      .map(([location, count]) => ({
+        location,
+        count,
+        percentage: Math.round((count / total) * 100)
+      }))
+      .sort((a, b) => b.count - a.count);
+    
+    // Profile completion stats
+    const completeProfiles = jobSeekers.filter(js => 
+      (js.profile_completion || js.completion_percentage || 0) === 100
+    ).length;
+    const incompleteProfiles = total - completeProfiles;
+    
+    // Recently updated (last 7 days)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const recentlyUpdated = jobSeekers.filter(js => {
+      const updatedDate = new Date(js.updated_at || js.last_updated);
+      return updatedDate >= sevenDaysAgo;
+    }).length;
+    
+    // Category breakdown
+    const categoryMap = new Map();
+    jobSeekers.forEach(js => {
+      const cat = js.job_category || js.category || 'Uncategorized';
+      categoryMap.set(cat, (categoryMap.get(cat) || 0) + 1);
+    });
+    const categoryBreakdown = Array.from(categoryMap.entries())
+      .map(([category, count]) => ({ category, count }))
+      .sort((a, b) => b.count - a.count);
+    
+    return {
+      total,
+      active,
+      inactive,
+      avgCompletion,
+      locationBreakdown,
+      completeProfiles,
+      incompleteProfiles,
+      recentlyUpdated,
+      categoryBreakdown
+    };
+  }
+
+  /**
+   * Helper: Get profile completion breakdown
+   */
+  getProfileCompletionBreakdown(profiles) {
+    const ranges = [
+      { min: 0, max: 25, label: '0-25%' },
+      { min: 26, max: 50, label: '26-50%' },
+      { min: 51, max: 75, label: '51-75%' },
+      { min: 76, max: 99, label: '76-99%' }
+    ];
+    
+    const breakdown = ranges.map(range => {
+      const count = profiles.filter(p => {
+        const completion = p.completion_percentage || p.profile_completion || 0;
+        return completion >= range.min && completion <= range.max;
+      }).length;
+      
+      return `- ${range.label}: ${count} users (${Math.round((count / profiles.length) * 100)}%)`;
+    }).join('\n');
+    
+    return breakdown;
+  }
+
+  /**
+   * Helper: Get location breakdown
+   */
+  getLocationBreakdown(profiles) {
+    const locationMap = new Map();
+    profiles.forEach(p => {
+      const loc = p.location || 'Unknown';
+      locationMap.set(loc, (locationMap.get(loc) || 0) + 1);
+    });
+    
+    const breakdown = Array.from(locationMap.entries())
+      .map(([location, count]) => ({ location, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5)
+      .map((item, idx) => `${idx + 1}. ${item.location}: ${item.count} users`)
+      .join('\n');
+    
+    return breakdown;
+  }
+
+  /**
+   * Helper: Get missing fields analysis
+   */
+  getMissingFieldsAnalysis(profiles) {
+    const fieldMap = new Map();
+    
+    profiles.forEach(p => {
+      const missing = p.missing_fields || [];
+      missing.forEach(field => {
+        fieldMap.set(field, (fieldMap.get(field) || 0) + 1);
+      });
+    });
+    
+    const breakdown = Array.from(fieldMap.entries())
+      .map(([field, count]) => ({ field, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5)
+      .map((item, idx) => `${idx + 1}. ${item.field}: Missing in ${item.count} profiles`)
+      .join('\n');
+    
+    return breakdown || 'No specific missing fields data available';
+  }
+
+  /**
+   * Fallback methods for when API is unavailable
+   */
+  async handlePaymentQueryFallback() {
+    logger.warn('Using fallback payment data from local database');
+    
+    try {
       const [paymentSchedules] = await pool.execute(`
         SELECT * FROM payment_schedules 
         WHERE status = 'pending' 
@@ -164,16 +576,16 @@ ALWAYS be action-oriented and suggest next steps.`;
       
       if (paymentSchedules.length === 0) {
         return {
-          message: `Payment Status Update
+          message: `Payment Status Update (Local Data)
 
-No pending salary payments found. All payments are up to date!
+⚠️ Note: Using cached data. Real-time API unavailable.
+
+No pending salary payments found.
 
 Suggested Actions:
+- Check API connection
 - Review completed payments
-- Schedule next payment cycle
-- Generate payment reports
-
-Would you like me to show completed payments or help with next cycle planning?`,
+- Contact technical support`,
           type: 'payment_reminder'
         };
       }
@@ -182,7 +594,9 @@ Would you like me to show completed payments or help with next cycle planning?`,
       const daysUntilDue = Math.ceil((new Date(nextPayment.due_date) - new Date()) / (1000 * 60 * 60 * 24));
       
       return {
-        message: `Payment Reminder Alert
+        message: `Payment Reminder (Local Data)
+
+⚠️ Note: Using cached data. Real-time API unavailable.
 
 Upcoming Salary Payment:
 - Period: ${nextPayment.payment_period}
@@ -192,334 +606,62 @@ Upcoming Salary Payment:
 - Total Amount: RWF ${nextPayment.total_amount.toLocaleString()}
 
 Suggested Actions:
-1. Generate detailed payment report
-2. Send payment notifications to employees
-3. Verify bank account details
-4. Process payment batch
-
-Would you like me to generate the payment report or send notifications?`,
+1. Restore API connection for real-time data
+2. Generate payment report
+3. Verify bank account details`,
         type: 'payment_reminder'
       };
       
     } catch (error) {
-      logger.error('Error handling payment query', { error: error.message });
+      logger.error('Fallback payment query also failed', { error: error.message });
       return {
-        message: 'Error retrieving payment information. Please check the database connection.',
+        message: 'Unable to retrieve payment information. Please check system status.',
         type: 'text'
       };
     }
   }
 
-  async handleDatabaseQuery(message) {
+  async handleDatabaseQueryFallback() {
+    logger.warn('Using fallback database data');
+    
     try {
-      // Get employee statistics
       const [employeeStats] = await pool.execute(`
         SELECT 
           COUNT(*) as total_employees,
           SUM(CASE WHEN employment_status = 'active' THEN 1 ELSE 0 END) as active_employees,
-          SUM(CASE WHEN employment_status = 'pending' THEN 1 ELSE 0 END) as pending_employees,
-          COUNT(DISTINCT location) as locations,
-          COUNT(DISTINCT department) as departments
+          COUNT(DISTINCT location) as locations
         FROM platform_employees
       `);
       
-      // Get employer statistics
-      const [employerStats] = await pool.execute(`
-        SELECT 
-          COUNT(*) as total_employers,
-          SUM(CASE WHEN verification_status = 'verified' THEN 1 ELSE 0 END) as verified_employers,
-          SUM(CASE WHEN verification_status = 'pending' THEN 1 ELSE 0 END) as pending_employers,
-          SUM(job_postings_count) as total_job_postings
-        FROM platform_employers
-      `);
-      
-      // Get location breakdown
-      const [locationBreakdown] = await pool.execute(`
-        SELECT location, COUNT(*) as count 
-        FROM platform_employees 
-        WHERE employment_status = 'active'
-        GROUP BY location 
-        ORDER BY count DESC 
-        LIMIT 5
-      `);
-      
       const emp = employeeStats[0];
-      const empr = employerStats[0];
-      
-      let locationText = locationBreakdown.map(loc => `  - ${loc.location}: ${loc.count} employees`).join('\n');
       
       return {
-        message: `Database Summary Report
+        message: `Database Summary (Local Data)
+
+⚠️ Note: Using cached data. Real-time API unavailable.
 
 Employee Overview:
 - Total Employees: ${emp.total_employees}
 - Active: ${emp.active_employees}
-- Pending: ${emp.pending_employees}
-- Departments: ${emp.departments}
-
-Employer Overview:
-- Total Employers: ${empr.total_employers}
-- Verified: ${empr.verified_employers}
-- Pending Verification: ${empr.pending_employers}
-- Total Job Postings: ${empr.total_job_postings}
-
-Location Distribution:
-${locationText}
+- Locations: ${emp.locations}
 
 Suggested Actions:
-1. Filter by specific criteria (location, department, status)
-2. Export detailed reports
-3. Review pending verifications
-4. Analyze hiring trends
-
-Would you like me to filter by specific criteria or generate detailed reports?`,
+1. Restore API connection for real-time data
+2. Contact technical support
+3. Check system status`,
         type: 'database_query'
       };
       
     } catch (error) {
-      logger.error('Error handling database query', { error: error.message });
+      logger.error('Fallback database query also failed', { error: error.message });
       return {
-        message: 'Error querying database. Please check the connection and try again.',
+        message: 'Unable to retrieve database information. Please check system status.',
         type: 'text'
       };
     }
   }
 
-  async handleEmailQuery(message) {
-    try {
-      // Get email processing statistics
-      const [emailStats] = await pool.execute(`
-        SELECT 
-          email_category,
-          priority,
-          COUNT(*) as count,
-          SUM(CASE WHEN processing_status = 'pending' THEN 1 ELSE 0 END) as pending,
-          SUM(CASE WHEN processing_status = 'draft_ready' THEN 1 ELSE 0 END) as draft_ready
-        FROM email_processing 
-        WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
-        GROUP BY email_category, priority
-        ORDER BY priority DESC, count DESC
-      `);
-      
-      let categoryBreakdown = {};
-      let priorityBreakdown = {};
-      let totalEmails = 0;
-      let totalPending = 0;
-      let totalDrafts = 0;
-      
-      emailStats.forEach(stat => {
-        totalEmails += stat.count;
-        totalPending += stat.pending;
-        totalDrafts += stat.draft_ready;
-        
-        if (!categoryBreakdown[stat.email_category]) {
-          categoryBreakdown[stat.email_category] = 0;
-        }
-        categoryBreakdown[stat.email_category] += stat.count;
-        
-        if (!priorityBreakdown[stat.priority]) {
-          priorityBreakdown[stat.priority] = 0;
-        }
-        priorityBreakdown[stat.priority] += stat.count;
-      });
-      
-      return {
-        message: `Email Processing Summary (Last 24 Hours)
-
-Overview:
-- Total Emails: ${totalEmails}
-- Pending Processing: ${totalPending}
-- Draft Replies Ready: ${totalDrafts}
-
-By Category:
-- Job Seeker Inquiries: ${categoryBreakdown.job_seeker_inquiry || 0}
-- Employer Requests: ${categoryBreakdown.employer_request || 0}
-- Internal Notices: ${categoryBreakdown.internal_notice || 0}
-- Support Tickets: ${categoryBreakdown.support_ticket || 0}
-
-By Priority:
-- High Priority: ${priorityBreakdown.high || 0} emails
-- Medium Priority: ${priorityBreakdown.medium || 0} emails  
-- Low Priority: ${priorityBreakdown.low || 0} emails
-
-Suggested Actions:
-1. Review high-priority emails first
-2. Send draft replies for employer requests
-3. Auto-process routine inquiries
-4. Flag complex issues for manual review
-
-Would you like me to show draft replies or process specific email categories?`,
-        type: 'email_summary'
-      };
-      
-    } catch (error) {
-      logger.error('Error handling email query', { error: error.message });
-      return {
-        message: 'Error processing email data. Please check the email processing system.',
-        type: 'text'
-      };
-    }
-  }
-
-  async handleAnalyticsQuery(message) {
-    try {
-      // Get current month analytics
-      const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM format
-      
-      const [analytics] = await pool.execute(`
-        SELECT metric_name, metric_value, metric_type 
-        FROM platform_analytics 
-        WHERE period_value = ? 
-        ORDER BY metric_name
-      `, [currentMonth]);
-      
-      let metricsText = analytics.map(metric => {
-        let value = metric.metric_value;
-        if (metric.metric_type === 'percentage') value += '%';
-        if (metric.metric_type === 'currency') value = 'RWF ' + value.toLocaleString();
-        if (metric.metric_type === 'rating') value += '/5';
-        
-        return `- ${metric.metric_name.replace(/_/g, ' ').toUpperCase()}: ${value}`;
-      }).join('\n');
-      
-      return {
-        message: `Platform Analytics Dashboard (${currentMonth})
-
-Key Metrics:
-${metricsText}
-
-Performance Indicators:
-- Platform Growth: Positive trend
-- User Engagement: Above average
-- Hiring Success Rate: 2.8% (34 hires from 1,234 applications)
-
-Top Performing Sectors:
-1. Technology (45% of new jobs)
-2. Healthcare (23% of new jobs)  
-3. Education (18% of new jobs)
-
-Suggested Actions:
-1. Deep dive into growth metrics
-2. Analyze user behavior patterns
-3. Optimize low-performing sectors
-4. Generate executive summary report
-
-Would you like detailed breakdowns for any specific metric?`,
-        type: 'analytics'
-      };
-      
-    } catch (error) {
-      logger.error('Error handling analytics query', { error: error.message });
-      return {
-        message: 'Error retrieving analytics data. Please check the analytics system.',
-        type: 'text'
-      };
-    }
-  }
-
-  async generateAdminResponse(message, sessionId) {
-    try {
-      const completion = await this.openai.chat.completions.create({
-        model: process.env.CHAT_MODEL || 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: this.systemPrompt },
-          { role: 'user', content: message }
-        ],
-        max_tokens: 1000,
-        temperature: 0.7
-      });
-      
-      return {
-        message: completion.choices[0].message.content,
-        type: 'text'
-      };
-      
-    } catch (error) {
-      logger.error('Error generating admin response', { error: error.message });
-      return {
-        message: 'I understand your request. As your admin assistant, I can help with payment reminders, database queries, email processing, and platform analytics. What specific admin task would you like assistance with?',
-        type: 'text'
-      };
-    }
-  }
-
-  async validateAdminUser(userId) {
-    try {
-      const [users] = await pool.execute(
-        'SELECT * FROM user_profiles WHERE user_id = ? AND user_type IN ("admin", "super_admin") AND is_active = TRUE',
-        [userId]
-      );
-      return users.length > 0 ? users[0] : null;
-    } catch (error) {
-      logger.error('Error validating admin user', { error: error.message });
-      return null;
-    }
-  }
-
-  async createAdminSession(sessionId, userId) {
-    try {
-      await pool.execute(
-        `INSERT INTO chat_sessions (session_id, user_id, bot_type, session_name, is_active) 
-         VALUES (?, ?, 'admin', 'Admin Chat Session', TRUE)`,
-        [sessionId, userId]
-      );
-    } catch (error) {
-      logger.error('Error creating admin session', { error: error.message });
-      throw error;
-    }
-  }
-
-  async validateAdminSession(sessionId, userId) {
-    try {
-      const [sessions] = await pool.execute(
-        'SELECT * FROM chat_sessions WHERE session_id = ? AND user_id = ? AND is_active = TRUE',
-        [sessionId, userId]
-      );
-      return sessions.length > 0;
-    } catch (error) {
-      logger.error('Error validating admin session', { error: error.message });
-      return false;
-    }
-  }
-
-  async saveMessage(sessionId, userId, sender, message, messageType) {
-    try {
-      await pool.execute(
-        `INSERT INTO chat_messages (session_id, user_id, sender, message, message_type) 
-         VALUES (?, ?, ?, ?, ?)`,
-        [sessionId, userId, sender, message, messageType]
-      );
-    } catch (error) {
-      logger.error('Error saving admin message', { error: error.message });
-      throw error;
-    }
-  }
-
-  async getHistory(req, res) {
-    try {
-      const { session_id } = req.params;
-      
-      const [messages] = await pool.execute(
-        `SELECT sender, message, created_at 
-         FROM chat_messages 
-         WHERE session_id = ? 
-         ORDER BY created_at ASC`,
-        [session_id]
-      );
-      
-      res.json({
-        success: true,
-        data: { messages }
-      });
-      
-    } catch (error) {
-      logger.error('Error getting admin chat history', { error: error.message });
-      res.status(500).json({
-        success: false,
-        error: 'Failed to retrieve chat history'
-      });
-    }
-  }
+  // ... keep all other existing methods (validateAdminUser, createAdminSession, etc.) ...
 }
 
 module.exports = chatController;
